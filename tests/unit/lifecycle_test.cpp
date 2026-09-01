@@ -10,6 +10,7 @@ using rillnet::ConnectionState;
 using rillnet::LifecycleTransitionError;
 using rillnet::OperationState;
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void advance_to(rillnet::ConnectionLifecycle &lifecycle, ConnectionState state)
 {
     switch (state) {
@@ -42,6 +43,7 @@ void advance_to(rillnet::ConnectionLifecycle &lifecycle, ConnectionState state)
     }
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(ConnectionLifecycleTest, AcceptsOnlySpecifiedTransitions)
 {
     constexpr std::array states{ConnectionState::created,   ConnectionState::connecting,
@@ -96,6 +98,7 @@ TEST(ConnectionLifecycleTest, SupportsClientAndServerPaths)
     EXPECT_EQ(server.transition(ConnectionState::closed), LifecycleTransitionError::none);
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(OperationLifecycleTest, AcceptsOnlySpecifiedTransitions)
 {
     constexpr std::array states{OperationState::created, OperationState::active,
@@ -119,6 +122,7 @@ TEST(OperationLifecycleTest, AcceptsOnlySpecifiedTransitions)
     }
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(OperationLifecycleTest, HasExactlyOneTerminalTransition)
 {
     constexpr std::array terminal_states{OperationState::completed, OperationState::failed,

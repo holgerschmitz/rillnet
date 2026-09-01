@@ -27,6 +27,8 @@ set(rillnet_format_sources
   include/rillnet/lifecycle.hpp
   include/rillnet/status_code.hpp
   include/rillnet/transport.hpp
+  include/rillnet/tcp_transport.hpp
+  include/rillnet/tcp_client.hpp
   src/rillnet.cpp
   tests/unit/version_test.cpp
   tests/unit/identifiers_test.cpp
@@ -37,11 +39,12 @@ set(rillnet_format_sources
   tests/unit/lifecycle_test.cpp
   tests/unit/status_code_test.cpp
   tests/unit/transport_test.cpp
+  tests/unit/tcp_transport_test.cpp
+  tests/unit/tcp_client_test.cpp
 )
 
-set(rillnet_clang_tidy_sources
-  src/rillnet.cpp
-)
+set(rillnet_clang_tidy_sources ${rillnet_format_sources})
+list(FILTER rillnet_clang_tidy_sources INCLUDE REGEX "\\.cpp$")
 
 function(rillnet_apply_project_warnings target_name)
   if(NOT RILLNET_ENABLE_WARNINGS)
@@ -119,7 +122,6 @@ include(CTest)
 
 if(RILLNET_BUILD_TESTS AND BUILD_TESTING)
   find_package(GTest REQUIRED)
-  list(APPEND rillnet_clang_tidy_sources tests/unit/version_test.cpp)
   add_subdirectory(tests)
 endif()
 

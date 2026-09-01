@@ -33,6 +33,7 @@ enum class StatusCode : std::uint16_t {
     transport_error = 1000,
     connection_closed = 1001,
     connection_reset = 1002,
+    connection_timed_out = 1003,
 
     // ProtocolError: the peer violated the wire protocol itself.
     protocol_error = 2000,
@@ -95,6 +96,8 @@ enum class StatusCode : std::uint16_t {
         return "connection_closed";
     case StatusCode::connection_reset:
         return "connection_reset";
+    case StatusCode::connection_timed_out:
+        return "connection_timed_out";
     case StatusCode::protocol_error:
         return "protocol_error";
     case StatusCode::unsupported_version:

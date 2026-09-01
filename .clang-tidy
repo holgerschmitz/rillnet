@@ -8,5 +8,5 @@ Checks: >
   -modernize-use-trailing-return-type,
   -readability-identifier-length,
   -readability-magic-numbers
-HeaderFilterRegex: '.*'
+HeaderFilterRegex: '^(src|include|tests)/.*'
 FormatStyle: file

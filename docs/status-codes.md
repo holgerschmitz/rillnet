@@ -13,7 +13,7 @@ category:
 | Band | Category        | Example codes                                              |
 |-----:|-----------------|-------------------------------------------------------------|
 |    0 | ok               | `ok`                                                        |
-| 1000 | transport        | `connection_closed`, `connection_reset`                     |
+| 1000 | transport        | `connection_closed`, `connection_reset`, `connection_timed_out` |
 | 2000 | protocol         | `unsupported_version`, `malformed_frame`, `unknown_stream`   |
 | 3000 | serialization    | `unknown_message_type`, `decode_error`                       |
 | 4000 | operation        | `operation_error`                                            |

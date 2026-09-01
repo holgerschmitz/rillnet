@@ -5,6 +5,7 @@ add_executable(rillnet_unit_tests
   frame_flags_test.cpp
   frame_test.cpp
   error_test.cpp
+  lifecycle_test.cpp
   status_code_test.cpp
 )
 

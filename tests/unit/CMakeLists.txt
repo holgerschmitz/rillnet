@@ -9,6 +9,7 @@ target_link_libraries(rillnet_unit_tests
 )
 
 rillnet_apply_project_warnings(rillnet_unit_tests)
+rillnet_apply_project_sanitizers(rillnet_unit_tests)
 
 include(GoogleTest)
 gtest_discover_tests(rillnet_unit_tests)

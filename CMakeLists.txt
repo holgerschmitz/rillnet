@@ -10,8 +10,22 @@ project(
 option(RILLNET_BUILD_TESTS "Build rillnet tests" ON)
 option(RILLNET_ENABLE_WARNINGS "Enable project compiler warnings" ON)
 option(RILLNET_WARNINGS_AS_ERRORS "Treat project compiler warnings as errors" OFF)
+set(RILLNET_SANITIZER "none" CACHE STRING "Sanitizer instrumentation to enable: none, address-undefined, thread")
+set_property(CACHE RILLNET_SANITIZER PROPERTY STRINGS none address-undefined thread)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Boost 1.83 REQUIRED)
+
+set(rillnet_format_sources
+  include/rillnet/version.hpp
+  src/rillnet.cpp
+  tests/unit/version_test.cpp
+)
+
+set(rillnet_clang_tidy_sources
+  src/rillnet.cpp
+)
 
 function(rillnet_apply_project_warnings target_name)
   if(NOT RILLNET_ENABLE_WARNINGS)
@@ -35,6 +49,33 @@ function(rillnet_apply_project_warnings target_name)
   target_compile_options(${target_name} PRIVATE ${rillnet_warning_flags})
 endfunction()
 
+function(rillnet_apply_project_sanitizers target_name)
+  if(RILLNET_SANITIZER STREQUAL "none")
+    return()
+  endif()
+
+  if(MSVC)
+    message(FATAL_ERROR "RILLNET_SANITIZER is not supported with MSVC")
+  endif()
+
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    message(FATAL_ERROR "RILLNET_SANITIZER requires Clang, AppleClang, or GCC")
+  endif()
+
+  set(rillnet_sanitizer_flags -fno-omit-frame-pointer)
+
+  if(RILLNET_SANITIZER STREQUAL "address-undefined")
+    list(APPEND rillnet_sanitizer_flags -fsanitize=address,undefined)
+  elseif(RILLNET_SANITIZER STREQUAL "thread")
+    list(APPEND rillnet_sanitizer_flags -fsanitize=thread)
+  else()
+    message(FATAL_ERROR "Unknown RILLNET_SANITIZER value: ${RILLNET_SANITIZER}")
+  endif()
+
+  target_compile_options(${target_name} PRIVATE ${rillnet_sanitizer_flags})
+  target_link_options(${target_name} PRIVATE ${rillnet_sanitizer_flags})
+endfunction()
+
 add_library(rillnet
   src/rillnet.cpp
 )
@@ -56,10 +97,40 @@ target_include_directories(rillnet
 target_link_libraries(rillnet PUBLIC Boost::headers)
 
 rillnet_apply_project_warnings(rillnet)
+rillnet_apply_project_sanitizers(rillnet)
 
 include(CTest)
 
 if(RILLNET_BUILD_TESTS AND BUILD_TESTING)
   find_package(GTest REQUIRED)
+  list(APPEND rillnet_clang_tidy_sources tests/unit/version_test.cpp)
   add_subdirectory(tests)
+endif()
+
+find_program(CLANG_FORMAT_EXE NAMES clang-format)
+if(CLANG_FORMAT_EXE)
+  add_custom_target(clang-format-check
+    COMMAND ${CLANG_FORMAT_EXE} --dry-run --Werror ${rillnet_format_sources}
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    COMMENT "Checking C++ formatting with clang-format"
+  )
+else()
+  add_custom_target(clang-format-check
+    COMMAND ${CMAKE_COMMAND} -E echo "clang-format not found"
+    COMMAND ${CMAKE_COMMAND} -E false
+  )
+endif()
+
+find_program(CLANG_TIDY_EXE NAMES clang-tidy)
+if(CLANG_TIDY_EXE)
+  add_custom_target(clang-tidy
+    COMMAND ${CLANG_TIDY_EXE} -p ${PROJECT_BINARY_DIR} ${rillnet_clang_tidy_sources}
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    COMMENT "Running clang-tidy"
+  )
+else()
+  add_custom_target(clang-tidy
+    COMMAND ${CMAKE_COMMAND} -E echo "clang-tidy not found"
+    COMMAND ${CMAKE_COMMAND} -E false
+  )
 endif()

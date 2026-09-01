@@ -7,6 +7,7 @@ add_executable(rillnet_unit_tests
   error_test.cpp
   lifecycle_test.cpp
   status_code_test.cpp
+  transport_test.cpp
 )
 
 target_link_libraries(rillnet_unit_tests

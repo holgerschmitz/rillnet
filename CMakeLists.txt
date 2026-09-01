@@ -26,6 +26,7 @@ set(rillnet_format_sources
   include/rillnet/error.hpp
   include/rillnet/lifecycle.hpp
   include/rillnet/status_code.hpp
+  include/rillnet/transport.hpp
   src/rillnet.cpp
   tests/unit/version_test.cpp
   tests/unit/identifiers_test.cpp
@@ -35,6 +36,7 @@ set(rillnet_format_sources
   tests/unit/error_test.cpp
   tests/unit/lifecycle_test.cpp
   tests/unit/status_code_test.cpp
+  tests/unit/transport_test.cpp
 )
 
 set(rillnet_clang_tidy_sources

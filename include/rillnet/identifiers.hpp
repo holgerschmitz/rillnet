@@ -45,6 +45,20 @@ using MessageType = detail::StrongId<MessageTypeTag, std::uint32_t>;
 // milestone requires more than one request per stream.
 using RequestId = StreamId;
 
+// Streams are partitioned by who is allowed to allocate them: clients allocate odd-numbered
+// stream ids (1, 3, 5, ...) and servers allocate even-numbered stream ids (2, 4, 6, ...),
+// following the convention used by HTTP/2. This lets both sides allocate new streams without
+// coordinating with each other, while still being able to tell which side opened a given stream.
+[[nodiscard]] constexpr bool is_client_stream(StreamId id) noexcept
+{
+    return id.is_valid() && (id.value() % 2) == 1;
+}
+
+[[nodiscard]] constexpr bool is_server_stream(StreamId id) noexcept
+{
+    return id.is_valid() && (id.value() % 2) == 0;
+}
+
 } // namespace rillnet
 
 template <typename Tag, typename ValueType>

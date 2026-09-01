@@ -50,4 +50,20 @@ TEST(IdentifiersTest, RequestIdIsAliasOfStreamId)
     static_assert(std::is_same_v<rillnet::RequestId, rillnet::StreamId>);
 }
 
+TEST(IdentifiersTest, OddStreamIdsAreClientAllocated)
+{
+    EXPECT_TRUE(rillnet::is_client_stream(rillnet::StreamId{1}));
+    EXPECT_TRUE(rillnet::is_client_stream(rillnet::StreamId{3}));
+    EXPECT_FALSE(rillnet::is_client_stream(rillnet::StreamId{2}));
+    EXPECT_FALSE(rillnet::is_client_stream(rillnet::StreamId{}));
+}
+
+TEST(IdentifiersTest, EvenStreamIdsAreServerAllocated)
+{
+    EXPECT_TRUE(rillnet::is_server_stream(rillnet::StreamId{2}));
+    EXPECT_TRUE(rillnet::is_server_stream(rillnet::StreamId{4}));
+    EXPECT_FALSE(rillnet::is_server_stream(rillnet::StreamId{1}));
+    EXPECT_FALSE(rillnet::is_server_stream(rillnet::StreamId{}));
+}
+
 } // namespace

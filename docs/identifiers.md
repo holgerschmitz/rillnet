@@ -1,7 +1,7 @@
 # Protocol Identifiers
 
-This document explains the identifier types introduced in Epic 1.2 of the
-implementation plan: `StreamId`, `MessageType` and `RequestId`, all declared in
+This document explains the identifier types, `StreamId`, `MessageType` and 
+`RequestId`, all declared in
 [`include/rillnet/identifiers.hpp`](../include/rillnet/identifiers.hpp).
 
 ## Why strong types instead of plain integers
@@ -32,22 +32,29 @@ Each `StrongId` supports:
 ## `StreamId`
 
 `StreamId` identifies a logical, multiplexed request/response exchange within
-a single connection (see Epic 4.1/4.2). A connection can have many concurrent
+a single connection. A connection can have many concurrent
 streams in flight, and responses may complete in any order, so every frame
 needs to carry the stream it belongs to.
 
 `StreamId` wraps a `std::uint64_t`. A 64-bit value avoids wraparound concerns
 for the lifetime of a connection, even under sustained high request rates.
-Allocation rules (for example, separate ranges or odd/even numbering for
-client- versus server-initiated streams) are the responsibility of the future
-stream allocator (Epic 4.2) and are intentionally not encoded in the type
-itself.
+
+### Client versus server allocation
+
+Streams are partitioned by who is allowed to allocate them: **clients
+allocate odd-numbered stream ids** (1, 3, 5, ...) and **servers allocate
+even-numbered stream ids** (2, 4, 6, ...), following the convention used by
+HTTP/2. This lets both sides create new streams independently, without
+coordinating with each other or risking a collision, while `is_client_stream`
+and `is_server_stream` let any code that receives a `StreamId` tell at a
+glance which side opened it - useful for validating that a peer has not sent
+a frame on a stream it was never allowed to allocate.
 
 ## `MessageType`
 
 `MessageType` identifies the *kind* of message carried by a frame payload -
 for example `StartSimulation` versus `SimulationStarted`. It is used by the
-message registry (Epic 3.2) to map between wire values and C++ types, and by
+message registry to map between wire values and C++ types, and by
 servers to dispatch an incoming message to the correct handler.
 
 `MessageType` wraps a `std::uint32_t`. Message types are a closed,
@@ -89,6 +96,13 @@ if (stream.is_valid()) {
     // route the frame associated with `stream`
 }
 
+if (rillnet::is_client_stream(stream)) {
+    // the frame was allocated by a client
+}
+
 std::unordered_map<rillnet::StreamId, Operation> operations;
 operations.emplace(stream, Operation{});
 ```
+
+See also [`protocol-version.md`](protocol-version.md),
+[`frame-flags.md`](frame-flags.md) and [`status-codes.md`](status-codes.md).

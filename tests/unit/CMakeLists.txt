@@ -1,6 +1,9 @@
 add_executable(rillnet_unit_tests
   version_test.cpp
   identifiers_test.cpp
+  protocol_version_test.cpp
+  frame_flags_test.cpp
+  status_code_test.cpp
 )
 
 target_link_libraries(rillnet_unit_tests

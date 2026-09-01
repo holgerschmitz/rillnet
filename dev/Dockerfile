@@ -12,6 +12,7 @@ RUN apt-get update \
         iproute2 \
         libboost-all-dev \
         libgtest-dev \
+        libgmock-dev \
         ninja-build \
         pkg-config \
         clang-tidy \

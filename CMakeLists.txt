@@ -19,8 +19,10 @@ find_package(Boost 1.83 REQUIRED)
 
 set(rillnet_format_sources
   include/rillnet/version.hpp
+  include/rillnet/identifiers.hpp
   src/rillnet.cpp
   tests/unit/version_test.cpp
+  tests/unit/identifiers_test.cpp
 )
 
 set(rillnet_clang_tidy_sources

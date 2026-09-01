@@ -1,5 +1,6 @@
 add_executable(rillnet_unit_tests
   version_test.cpp
+  identifiers_test.cpp
 )
 
 target_link_libraries(rillnet_unit_tests

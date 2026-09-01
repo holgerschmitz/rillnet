@@ -1,0 +1,27 @@
+{
+  "name": "rillnet",
+  "build": {
+    "dockerfile": "../dev/Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/workspace/rillnet",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/rillnet,type=bind,consistency=cached",
+  "remoteUser": "vscode",
+  "runArgs": ["--cap-add=NET_ADMIN"],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "ms-vscode.cmake-tools",
+        "llvm-vs-code-extensions.vscode-clangd",
+        "xaver.clang-format"
+      ],
+      "settings": {
+        "cmake.configureOnOpen": true,
+        "C_Cpp.default.compilerPath": "/usr/bin/clang++"
+      }
+    }
+  },
+  "postCreateCommand": "cmake --preset debug"
+}

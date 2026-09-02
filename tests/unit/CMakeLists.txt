@@ -10,6 +10,7 @@ add_executable(rillnet_unit_tests
   transport_test.cpp
   tcp_transport_test.cpp
   tcp_client_test.cpp
+  tcp_server_test.cpp
 )
 
 target_link_libraries(rillnet_unit_tests

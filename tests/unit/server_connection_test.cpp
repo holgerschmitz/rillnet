@@ -8,6 +8,7 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/strand.hpp>
 #include <boost/asio/use_future.hpp>
 
 #include <gtest/gtest.h>
@@ -16,6 +17,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -100,6 +103,70 @@ TEST(ServerConnectionTest, DispatchesHandlersWithoutBlockingTheReadLoop)
     ASSERT_TRUE(second_response.ok());
     EXPECT_EQ(first_response.value->id, 12U); // NOLINT(bugprone-unchecked-optional-access)
     EXPECT_EQ(second_response.value->id, 8U); // NOLINT(bugprone-unchecked-optional-access)
+}
+
+TEST(ServerConnectionTest, IsolatesHandlerExceptionsFromOtherOperations)
+{
+    boost::asio::io_context context;
+    const auto registry = make_registry();
+    auto transport = std::make_unique<InMemoryTransport>(encode_request_bytes(registry));
+    auto *transport_ptr = transport.get();
+    ServerConnection connection(context.get_executor(), std::move(transport), registry);
+
+    connection.handle<StartSimulation>(
+        [](SessionContext &, StartSimulation request) -> boost::asio::awaitable<SimulationStarted> {
+            if (request.id == 7) {
+                throw std::runtime_error("handler failure");
+            }
+            co_return SimulationStarted{request.id};
+        });
+
+    auto future =
+        boost::asio::co_spawn(context, [&]() { return connection.run(); }, boost::asio::use_future);
+    context.run();
+    future.get();
+
+    FrameDecoder decoder;
+    const auto responses = decoder.push(transport_ptr->outgoing());
+    ASSERT_EQ(responses.size(), 1U);
+    EXPECT_EQ(responses[0].header.type, FrameType::response);
+    EXPECT_EQ(responses[0].header.stream, StreamId{3});
+    const auto response = decode_message<SimulationStarted>(registry, responses[0]);
+    ASSERT_TRUE(response.ok());
+    EXPECT_EQ(response.value->id, 9U); // NOLINT(bugprone-unchecked-optional-access)
+}
+
+TEST(ServerConnectionTest, SupportsMultiThreadedIoWithSerializedConnectionState)
+{
+    boost::asio::io_context context;
+    auto connection_executor = boost::asio::make_strand(context);
+    const auto registry = make_registry();
+    auto transport = std::make_unique<InMemoryTransport>(encode_request_bytes(registry));
+    auto *transport_ptr = transport.get();
+    ServerConnection connection(connection_executor, std::move(transport), registry);
+
+    connection.handle<StartSimulation>(
+        [](SessionContext &, StartSimulation request) -> boost::asio::awaitable<SimulationStarted> {
+            co_return SimulationStarted{request.id};
+        });
+
+    auto future = boost::asio::co_spawn(
+        connection_executor, [&]() { return connection.run(); }, boost::asio::use_future);
+    std::vector<std::thread> workers;
+    for (int index = 0; index < 4; ++index) {
+        workers.emplace_back([&context]() { context.run(); });
+    }
+    for (auto &worker : workers) {
+        worker.join();
+    }
+    future.get();
+
+    FrameDecoder decoder;
+    const auto responses = decoder.push(transport_ptr->outgoing());
+    ASSERT_EQ(responses.size(), 2U);
+    for (const auto &response : responses) {
+        EXPECT_EQ(response.header.type, FrameType::response);
+    }
 }
 
 } // namespace

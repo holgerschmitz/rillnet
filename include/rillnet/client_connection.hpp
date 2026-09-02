@@ -129,6 +129,10 @@ template <typename CodecType = PodCodec> class ClientConnection {
 
     void dispatch(Frame frame)
     {
+        if (frame.header.type != FrameType::response) {
+            return;
+        }
+
         const auto found = pending_.find(frame.header.stream);
         if (found == pending_.end()) {
             return; // response for an unknown or already-completed stream is silently dropped

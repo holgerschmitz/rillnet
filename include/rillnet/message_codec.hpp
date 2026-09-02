@@ -47,10 +47,11 @@ struct FrameEncodeResult {
 // The message type prefix lets a receiver identify which C++ type a frame's payload decodes to
 // before any codec runs (see peek_message_type / decode_message_payload).
 template <typename Message, typename CodecType>
-[[nodiscard]] EncodeResult encode_message_payload(const MessageRegistry<CodecType> &registry,
-                                                  const Message &value)
+[[nodiscard]] EncodeResult
+encode_message_payload(const MessageRegistry<CodecType> &registry, const Message &value,
+                       ProtocolVersion version = current_protocol_version)
 {
-    const auto wire_type = registry.template message_type<Message>();
+    const auto wire_type = registry.template message_type<Message>(version);
     if (!wire_type.has_value()) {
         return EncodeResult::failure(StatusCode::unknown_message_type,
                                      "message type is not registered");
@@ -84,7 +85,8 @@ template <typename Message, typename CodecType>
 // throwing, so callers can map the outcome into the protocol error model uniformly.
 template <typename Message, typename CodecType>
 [[nodiscard]] DecodeResult<Message>
-decode_message_payload(const MessageRegistry<CodecType> &registry, const Buffer &payload)
+decode_message_payload(const MessageRegistry<CodecType> &registry, const Buffer &payload,
+                       ProtocolVersion version = current_protocol_version)
 {
     const auto wire_type = peek_message_type(payload);
     if (!wire_type.has_value()) {
@@ -92,7 +94,7 @@ decode_message_payload(const MessageRegistry<CodecType> &registry, const Buffer 
                                               "payload is too small to contain a message type");
     }
 
-    const auto expected_type = registry.template message_type<Message>();
+    const auto expected_type = registry.template message_type<Message>(version);
     if (!expected_type.has_value() || *expected_type != *wire_type) {
         return DecodeResult<Message>::failure(StatusCode::unknown_message_type,
                                               "payload message type does not match Message");
@@ -114,9 +116,10 @@ template <typename Message, typename CodecType>
 [[nodiscard]] FrameEncodeResult
 encode_message(const MessageRegistry<CodecType> &registry, const Message &value, StreamId stream,
                FrameType frame_type = FrameType::request, FrameFlags flags = FrameFlags::none,
-               std::uint32_t max_payload_size = default_max_payload_size)
+               std::uint32_t max_payload_size = default_max_payload_size,
+               ProtocolVersion version = current_protocol_version)
 {
-    const auto encoded = encode_message_payload(registry, value);
+    const auto encoded = encode_message_payload(registry, value, version);
     if (!encoded.ok()) {
         return FrameEncodeResult::failure(encoded.status, encoded.message);
     }
@@ -126,6 +129,7 @@ encode_message(const MessageRegistry<CodecType> &registry, const Message &value,
     }
 
     FrameHeader header;
+    header.version = version;
     header.type = frame_type;
     header.flags = flags;
     header.stream = stream;
@@ -139,7 +143,7 @@ template <typename Message, typename CodecType>
 [[nodiscard]] DecodeResult<Message> decode_message(const MessageRegistry<CodecType> &registry,
                                                    const Frame &frame)
 {
-    return decode_message_payload<Message>(registry, frame.payload);
+    return decode_message_payload<Message>(registry, frame.payload, frame.header.version);
 }
 
 } // namespace rillnet

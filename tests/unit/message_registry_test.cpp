@@ -24,6 +24,7 @@ struct UnsupportedMessage {
 using rillnet::MessageRegistrationError;
 using rillnet::MessageRegistry;
 using rillnet::MessageType;
+using rillnet::ProtocolVersion;
 
 TEST(MessageRegistryTest, RegistersAndLooksUpMessageInBothDirections)
 {
@@ -84,6 +85,35 @@ TEST(MessageRegistryTest, RejectsMessageTypesUnsupportedByTheCodec)
     EXPECT_FALSE(result.ok());
     EXPECT_EQ(result.error, MessageRegistrationError::unsupported_message_type);
     EXPECT_FALSE(registry.contains(MessageType{100}));
+}
+
+TEST(MessageRegistryTest, KeepsRegistrationsIndependentForEachProtocolVersion)
+{
+    MessageRegistry registry;
+    constexpr ProtocolVersion first_version{1, 0};
+    constexpr ProtocolVersion second_version{2, 0};
+
+    ASSERT_TRUE(registry.for_version(first_version).register_message<StartSimulation>(100).ok());
+    ASSERT_TRUE(registry.for_version(second_version).register_message<StartSimulation>(200).ok());
+
+    EXPECT_EQ(registry.for_version(first_version).message_type<StartSimulation>(),
+              std::optional{MessageType{100}});
+    EXPECT_EQ(registry.for_version(second_version).message_type<StartSimulation>(),
+              std::optional{MessageType{200}});
+    EXPECT_FALSE(registry.for_version(first_version).contains(MessageType{200}));
+}
+
+TEST(MessageRegistryTest, AllowsTheSameMessageIdInDifferentProtocolVersions)
+{
+    MessageRegistry registry;
+    constexpr ProtocolVersion first_version{1, 0};
+    constexpr ProtocolVersion second_version{2, 0};
+
+    ASSERT_TRUE(registry.for_version(first_version).register_message<StartSimulation>(100).ok());
+    const auto result =
+        registry.for_version(second_version).register_message<SimulationStarted>(100);
+
+    EXPECT_TRUE(result.ok());
 }
 
 } // namespace

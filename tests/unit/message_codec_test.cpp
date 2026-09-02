@@ -18,6 +18,7 @@ using rillnet::MessageRegistry;
 using rillnet::MessageType;
 using rillnet::peek_message_type;
 using rillnet::PodCodec;
+using rillnet::ProtocolVersion;
 using rillnet::StatusCode;
 using rillnet::StreamId;
 
@@ -157,6 +158,32 @@ TEST(MessageCodecTest, DecodeMessagePayloadRoundTripsWithoutAFrame)
     const auto decoded = decode_message_payload<StartSimulation>(
         registry, *encoded_payload.payload); // NOLINT(bugprone-unchecked-optional-access)
 
+    ASSERT_TRUE(decoded.ok());
+    ASSERT_TRUE(decoded.value.has_value());
+    EXPECT_EQ(decoded.value->id, 7U); // NOLINT(bugprone-unchecked-optional-access)
+}
+
+TEST(MessageCodecTest, UsesTheFrameProtocolVersionForMessageLookup)
+{
+    MessageRegistry registry;
+    constexpr ProtocolVersion first_version{1, 0};
+    constexpr ProtocolVersion second_version{2, 0};
+    ASSERT_TRUE(registry.for_version(first_version).register_message<StartSimulation>(100).ok());
+    ASSERT_TRUE(registry.for_version(second_version).register_message<StartSimulation>(200).ok());
+
+    const auto encoded =
+        encode_message(registry, StartSimulation{7}, StreamId{1}, FrameType::request,
+                       FrameFlags::none, rillnet::default_max_payload_size, second_version);
+    ASSERT_TRUE(encoded.ok());
+    ASSERT_TRUE(encoded.frame.has_value());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    const Frame &frame = *encoded.frame;
+
+    EXPECT_EQ(frame.header.version, second_version);
+    ASSERT_TRUE(frame.payload.size() >= rillnet::message_type_size);
+    EXPECT_EQ(peek_message_type(frame.payload), std::optional{MessageType{200}});
+
+    const auto decoded = decode_message<StartSimulation>(registry, frame);
     ASSERT_TRUE(decoded.ok());
     ASSERT_TRUE(decoded.value.has_value());
     EXPECT_EQ(decoded.value->id, 7U); // NOLINT(bugprone-unchecked-optional-access)

@@ -23,6 +23,7 @@ set(rillnet_format_sources
   include/rillnet/protocol_version.hpp
   include/rillnet/frame_flags.hpp
   include/rillnet/frame.hpp
+  include/rillnet/frame_codec.hpp
   include/rillnet/error.hpp
   include/rillnet/lifecycle.hpp
   include/rillnet/status_code.hpp
@@ -36,6 +37,7 @@ set(rillnet_format_sources
   tests/unit/protocol_version_test.cpp
   tests/unit/frame_flags_test.cpp
   tests/unit/frame_test.cpp
+  tests/unit/frame_codec_test.cpp
   tests/unit/error_test.cpp
   tests/unit/lifecycle_test.cpp
   tests/unit/status_code_test.cpp

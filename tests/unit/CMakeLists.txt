@@ -4,6 +4,7 @@ add_executable(rillnet_unit_tests
   protocol_version_test.cpp
   frame_flags_test.cpp
   frame_test.cpp
+  frame_codec_test.cpp
   error_test.cpp
   lifecycle_test.cpp
   status_code_test.cpp

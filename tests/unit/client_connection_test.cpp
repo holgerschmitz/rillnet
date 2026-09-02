@@ -4,6 +4,8 @@
 
 #include <rillnet/frame.hpp>
 #include <rillnet/frame_codec.hpp>
+#include <rillnet/frame_decoder.hpp>
+#include <rillnet/frame_flags.hpp>
 #include <rillnet/message_codec.hpp>
 #include <rillnet/message_registry.hpp>
 #include <rillnet/status_code.hpp>
@@ -11,6 +13,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/asio/use_future.hpp>
 
@@ -30,7 +33,10 @@ using rillnet::ClientConnection;
 using rillnet::DecodeResult;
 using rillnet::encode_frame;
 using rillnet::encode_message;
+using rillnet::FrameDecoder;
+using rillnet::FrameFlags;
 using rillnet::FrameType;
+using rillnet::has_flag;
 using rillnet::MessageRegistry;
 using rillnet::StatusCode;
 using rillnet::StreamId;
@@ -412,6 +418,95 @@ TEST(ClientConnectionTest, IgnoresDuplicateResponsesAndResponsesForUnknownStream
         context,
         [&]() -> boost::asio::awaitable<DecodeResult<SimulationStarted>> {
             co_return co_await connection.request<StartSimulation, SimulationStarted>({7});
+        },
+        boost::asio::use_future);
+    auto run_future =
+        boost::asio::co_spawn(context, [&]() { return connection.run(); }, boost::asio::use_future);
+
+    context.run();
+
+    const auto result = request_future.get();
+    run_future.get();
+    ASSERT_TRUE(result.ok());
+    ASSERT_TRUE(result.value.has_value());
+    EXPECT_EQ(result.value->id, 42U); // NOLINT(bugprone-unchecked-optional-access)
+}
+
+TEST(ClientConnectionTest, CancelsOneOperationWithoutClosingTheConnection)
+{
+    boost::asio::io_context context;
+    const auto registry = make_registry();
+    auto transport =
+        std::make_unique<InMemoryTransport>(encode_response_bytes(registry, {{StreamId{3}, {22}}}));
+    const auto *transport_observer = transport.get();
+    ClientConnection connection(context.get_executor(), std::move(transport), registry);
+
+    auto cancelled_request = boost::asio::co_spawn(
+        context,
+        [&]() -> boost::asio::awaitable<DecodeResult<SimulationStarted>> {
+            auto started =
+                co_await connection.start_request<StartSimulation, SimulationStarted>({1});
+            if (!started.ok()) {
+                co_return DecodeResult<SimulationStarted>::failure(started.status, started.message);
+            }
+
+            auto operation = std::move(*started.operation);
+            EXPECT_EQ(operation.stream(), StreamId{1});
+            EXPECT_TRUE(operation.cancel());
+            co_return co_await operation.async_wait();
+        },
+        boost::asio::use_future);
+    auto successful_request = boost::asio::co_spawn(
+        context,
+        [&]() -> boost::asio::awaitable<DecodeResult<SimulationStarted>> {
+            co_return co_await connection.request<StartSimulation, SimulationStarted>({2});
+        },
+        boost::asio::use_future);
+    auto run_future =
+        boost::asio::co_spawn(context, [&]() { return connection.run(); }, boost::asio::use_future);
+
+    context.run();
+
+    const auto cancelled_result = cancelled_request.get();
+    const auto successful_result = successful_request.get();
+    run_future.get();
+
+    EXPECT_FALSE(cancelled_result.ok());
+    EXPECT_EQ(cancelled_result.status, StatusCode::cancelled);
+    EXPECT_FALSE(cancelled_result.value.has_value());
+    ASSERT_TRUE(successful_result.ok());
+    ASSERT_TRUE(successful_result.value.has_value());
+    EXPECT_EQ(successful_result.value->id, 22U); // NOLINT(bugprone-unchecked-optional-access)
+
+    FrameDecoder outgoing_decoder;
+    auto outgoing_frames = outgoing_decoder.push(transport_observer->outgoing());
+    ASSERT_EQ(outgoing_frames.size(), 3U);
+    EXPECT_EQ(outgoing_frames[1].header.stream, StreamId{1});
+    EXPECT_EQ(outgoing_frames[1].header.type, FrameType::request);
+    EXPECT_TRUE(has_flag(outgoing_frames[1].header.flags, FrameFlags::cancel));
+}
+
+TEST(ClientConnectionTest, ResponseWinsWhenItArrivesBeforeCancellation)
+{
+    boost::asio::io_context context;
+    const auto registry = make_registry();
+    ClientConnection connection(
+        context.get_executor(),
+        std::make_unique<InMemoryTransport>(encode_response_bytes(registry, {42})), registry);
+
+    auto request_future = boost::asio::co_spawn(
+        context,
+        [&]() -> boost::asio::awaitable<DecodeResult<SimulationStarted>> {
+            auto started =
+                co_await connection.start_request<StartSimulation, SimulationStarted>({7});
+            if (!started.ok()) {
+                co_return DecodeResult<SimulationStarted>::failure(started.status, started.message);
+            }
+
+            auto operation = std::move(*started.operation);
+            co_await boost::asio::post(boost::asio::use_awaitable);
+            EXPECT_FALSE(operation.cancel());
+            co_return co_await operation.async_wait();
         },
         boost::asio::use_future);
     auto run_future =

@@ -3,9 +3,11 @@
 #include <rillnet/codec.hpp>
 #include <rillnet/frame.hpp>
 #include <rillnet/frame_decoder.hpp>
+#include <rillnet/frame_flags.hpp>
 #include <rillnet/identifiers.hpp>
 #include <rillnet/message_codec.hpp>
 #include <rillnet/message_registry.hpp>
+#include <rillnet/operation.hpp>
 #include <rillnet/status_code.hpp>
 #include <rillnet/stream_id_allocator.hpp>
 #include <rillnet/transport.hpp>
@@ -23,7 +25,9 @@
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <span>
+#include <string>
 #include <unordered_map>
 #include <utility>
 
@@ -35,7 +39,96 @@ namespace rillnet {
 // the connection; request() can then be called concurrently from any number of coroutines running
 // on the same executor.
 template <typename CodecType = PodCodec> class ClientConnection {
+  private:
+    using ResponseChannel =
+        boost::asio::experimental::channel<void(boost::system::error_code, Frame)>;
+
+    struct PendingRequest {
+        PendingRequest(boost::asio::any_io_executor executor, StreamId stream)
+            : channel(std::move(executor), 1), operation(stream)
+        {
+            (void)operation.activate();
+        }
+
+        ResponseChannel channel;
+        Operation operation;
+    };
+
   public:
+    template <typename Response> class RequestOperation {
+      public:
+        RequestOperation() = default;
+
+        [[nodiscard]] StreamId stream() const noexcept
+        {
+            if (pending_) {
+                return pending_->operation.stream();
+            }
+            return StreamId{};
+        }
+
+        [[nodiscard]] bool cancel(std::string message = "operation cancelled")
+        {
+            if (connection_ == nullptr || !pending_) {
+                return false;
+            }
+            return connection_->cancel_pending(pending_, std::move(message));
+        }
+
+        boost::asio::awaitable<DecodeResult<Response>> async_wait()
+        {
+            if (connection_ == nullptr || !pending_) {
+                co_return DecodeResult<Response>::failure(StatusCode::operation_error,
+                                                          "operation handle is empty");
+            }
+
+            boost::system::error_code error;
+            auto frame = co_await pending_->channel.async_receive(
+                boost::asio::redirect_error(boost::asio::use_awaitable, error));
+            connection_->pending_.erase(pending_->operation.stream());
+
+            if (error) {
+                const auto &result = pending_->operation.result();
+                if (result.has_value()) {
+                    co_return DecodeResult<Response>::failure(result->status(), result->message());
+                }
+                co_return DecodeResult<Response>::failure(
+                    StatusCode::connection_closed, "connection closed while awaiting a response");
+            }
+
+            co_return decode_message<Response>(connection_->registry_, frame);
+        }
+
+      private:
+        friend class ClientConnection;
+
+        RequestOperation(ClientConnection *connection, std::shared_ptr<PendingRequest> pending)
+            : connection_(connection), pending_(std::move(pending))
+        {
+        }
+
+        ClientConnection *connection_ = nullptr;
+        std::shared_ptr<PendingRequest> pending_;
+    };
+
+    template <typename Response> struct StartRequestResult {
+        std::optional<RequestOperation<Response>> operation;
+        StatusCode status = StatusCode::ok;
+        std::string message;
+
+        [[nodiscard]] bool ok() const noexcept { return status == StatusCode::ok; }
+
+        [[nodiscard]] static StartRequestResult success(RequestOperation<Response> operation)
+        {
+            return StartRequestResult{std::move(operation), StatusCode::ok, {}};
+        }
+
+        [[nodiscard]] static StartRequestResult failure(StatusCode status, std::string message)
+        {
+            return StartRequestResult{std::nullopt, status, std::move(message)};
+        }
+    };
+
     ClientConnection(boost::asio::any_io_executor executor, std::unique_ptr<Transport> transport,
                      const MessageRegistry<CodecType> &registry)
         : executor_(std::move(executor)), transport_(std::move(transport)), registry_(registry),
@@ -65,42 +158,46 @@ template <typename CodecType = PodCodec> class ClientConnection {
     template <typename Request, typename Response>
     boost::asio::awaitable<DecodeResult<Response>> request(const Request &value)
     {
+        auto started = co_await start_request<Request, Response>(value);
+        if (!started.ok()) {
+            co_return DecodeResult<Response>::failure(started.status, started.message);
+        }
+
+        auto operation = std::move(*started.operation);
+        co_return co_await operation.async_wait();
+    }
+
+    template <typename Request, typename Response>
+    boost::asio::awaitable<StartRequestResult<Response>> start_request(const Request &value)
+    {
         const auto allocation = stream_ids_.allocate();
         if (!allocation.ok()) {
-            co_return DecodeResult<Response>::failure(allocation.status(),
-                                                      "stream identifiers exhausted");
+            co_return StartRequestResult<Response>::failure(allocation.status(),
+                                                            "stream identifiers exhausted");
         }
         const StreamId stream = *allocation.stream();
 
         const auto encoded = encode_message(registry_, value, stream);
         if (!encoded.ok()) {
-            co_return DecodeResult<Response>::failure(encoded.status, encoded.message);
+            co_return StartRequestResult<Response>::failure(encoded.status, encoded.message);
         }
 
-        auto [pending, inserted] = pending_.try_emplace(stream, ResponseChannel(executor_, 1));
+        auto pending = std::make_shared<PendingRequest>(executor_, stream);
+        pending_.emplace(stream, pending);
 
-        const auto sent = co_await write_queue_.enqueue(std::move(*encoded.frame));
+        const auto sent = write_queue_.try_enqueue(std::move(*encoded.frame));
         if (!sent.ok()) {
+            (void)pending->operation.fail(sent.status, sent.message);
+            pending->channel.close();
             pending_.erase(stream);
-            co_return DecodeResult<Response>::failure(sent.status, sent.message);
+            co_return StartRequestResult<Response>::failure(sent.status, sent.message);
         }
 
-        boost::system::error_code error;
-        auto frame = co_await pending->second.async_receive(
-            boost::asio::redirect_error(boost::asio::use_awaitable, error));
-        pending_.erase(stream);
-
-        if (error) {
-            co_return DecodeResult<Response>::failure(
-                StatusCode::connection_closed, "connection closed while awaiting a response");
-        }
-        co_return decode_message<Response>(registry_, frame);
+        co_return StartRequestResult<Response>::success(
+            RequestOperation<Response>(this, std::move(pending)));
     }
 
   private:
-    using ResponseChannel =
-        boost::asio::experimental::channel<void(boost::system::error_code, Frame)>;
-
     boost::asio::awaitable<void> read_loop()
     {
         std::array<std::byte, 4096> buffer{};
@@ -121,8 +218,11 @@ template <typename CodecType = PodCodec> class ClientConnection {
             }
         }
 
-        for (auto &[stream, channel] : pending_) {
-            channel.close();
+        for (auto &[stream, pending] : pending_) {
+            (void)stream;
+            (void)pending->operation.fail(StatusCode::connection_closed,
+                                          "connection closed while awaiting a response");
+            pending->channel.close();
         }
         write_queue_.close();
     }
@@ -137,7 +237,38 @@ template <typename CodecType = PodCodec> class ClientConnection {
         if (found == pending_.end()) {
             return; // response for an unknown or already-completed stream is silently dropped
         }
-        found->second.try_send(boost::system::error_code{}, std::move(frame));
+        if (has_flag(frame.header.flags, FrameFlags::cancel)) {
+            (void)cancel_pending(found->second, "operation cancelled by peer");
+            return;
+        }
+        if (!found->second->operation.complete("response received")) {
+            return;
+        }
+        found->second->channel.try_send(boost::system::error_code{}, std::move(frame));
+    }
+
+    [[nodiscard]] bool cancel_pending(const std::shared_ptr<PendingRequest> &pending,
+                                      std::string message)
+    {
+        if (!pending->operation.cancel(std::move(message))) {
+            return false;
+        }
+
+        send_cancellation(pending->operation.stream());
+        pending->channel.close();
+        pending_.erase(pending->operation.stream());
+        return true;
+    }
+
+    void send_cancellation(StreamId stream)
+    {
+        Frame frame;
+        frame.header.type = FrameType::request;
+        frame.header.flags = FrameFlags::cancel | FrameFlags::end_of_stream;
+        frame.header.stream = stream;
+        frame.header.payload_size = 0;
+
+        (void)write_queue_.try_enqueue(std::move(frame));
     }
 
     boost::asio::any_io_executor executor_;
@@ -146,7 +277,7 @@ template <typename CodecType = PodCodec> class ClientConnection {
     WriteQueue write_queue_;
     StreamIdAllocator stream_ids_;
     FrameDecoder decoder_;
-    std::unordered_map<StreamId, ResponseChannel> pending_;
+    std::unordered_map<StreamId, std::shared_ptr<PendingRequest>> pending_;
 };
 
 } // namespace rillnet

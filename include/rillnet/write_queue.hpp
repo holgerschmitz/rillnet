@@ -64,6 +64,15 @@ class WriteQueue {
     // Returns once the frame has been accepted into the queue, which is not the same as having
     // been written to the transport yet. Reports resource_limit_exceeded if the queue has been
     // closed or a bounded capacity is full.
+    [[nodiscard]] WriteResult try_enqueue(Frame frame)
+    {
+        if (!channel_.try_send(boost::system::error_code{}, std::move(frame))) {
+            return WriteResult::failure(StatusCode::resource_limit_exceeded,
+                                        "write queue is closed or full");
+        }
+        return WriteResult::success();
+    }
+
     boost::asio::awaitable<WriteResult> enqueue(Frame frame)
     {
         boost::system::error_code error;

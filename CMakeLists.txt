@@ -30,6 +30,7 @@ set(rillnet_format_sources
   include/rillnet/message_codec.hpp
   include/rillnet/error.hpp
   include/rillnet/lifecycle.hpp
+  include/rillnet/operation.hpp
   include/rillnet/status_code.hpp
   include/rillnet/transport.hpp
   include/rillnet/tcp_transport.hpp
@@ -49,6 +50,7 @@ set(rillnet_format_sources
   tests/unit/message_codec_test.cpp
   tests/unit/error_test.cpp
   tests/unit/lifecycle_test.cpp
+  tests/unit/operation_test.cpp
   tests/unit/status_code_test.cpp
   tests/unit/transport_test.cpp
   tests/unit/tcp_transport_test.cpp

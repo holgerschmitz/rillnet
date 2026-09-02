@@ -11,6 +11,7 @@ add_executable(rillnet_unit_tests
   message_codec_test.cpp
   error_test.cpp
   lifecycle_test.cpp
+  operation_test.cpp
   status_code_test.cpp
   transport_test.cpp
   tcp_transport_test.cpp

@@ -4,9 +4,6 @@
 
 namespace {
 
-TEST(VersionTest, ReportsInitialMajorVersion)
-{
-    EXPECT_EQ(rillnet::version_major(), 0);
-}
+TEST(VersionTest, ReportsInitialMajorVersion) { EXPECT_EQ(rillnet::version_major(), 0); }
 
 } // namespace

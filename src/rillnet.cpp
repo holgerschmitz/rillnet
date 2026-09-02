@@ -2,9 +2,6 @@
 
 namespace rillnet {
 
-int version_major() noexcept
-{
-    return 0;
-}
+int version_major() noexcept { return 0; }
 
 } // namespace rillnet

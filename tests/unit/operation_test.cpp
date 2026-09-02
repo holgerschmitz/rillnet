@@ -32,10 +32,11 @@ TEST(OperationTest, OwnsItsStreamLifecycleAndSuccessfulResult)
 TEST(OperationTest, CommitsExactlyOneTerminalResult)
 {
     std::size_t completions = 0;
-    Operation operation(rillnet::StreamId{3}, [&completions](const rillnet::OperationResult &result) {
-        ++completions;
-        EXPECT_EQ(result.status(), StatusCode::timeout_error);
-    });
+    Operation operation(rillnet::StreamId{3},
+                        [&completions](const rillnet::OperationResult &result) {
+                            ++completions;
+                            EXPECT_EQ(result.status(), StatusCode::timeout_error);
+                        });
 
     ASSERT_EQ(operation.activate(), rillnet::LifecycleTransitionError::none);
     EXPECT_TRUE(operation.timeout("deadline reached"));

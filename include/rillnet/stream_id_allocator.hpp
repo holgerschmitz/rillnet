@@ -78,7 +78,7 @@ class StreamIdAllocator {
     }
 
     [[nodiscard]] static constexpr std::uint64_t last_id(StreamInitiator initiator,
-                                                          std::uint64_t maximum) noexcept
+                                                         std::uint64_t maximum) noexcept
     {
         if (initiator == StreamInitiator::client) {
             return maximum % 2 == 1 ? maximum : maximum == 0 ? 0 : maximum - 1;

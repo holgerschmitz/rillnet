@@ -50,6 +50,20 @@ and `is_server_stream` let any code that receives a `StreamId` tell at a
 glance which side opened it - useful for validating that a peer has not sent
 a frame on a stream it was never allowed to allocate.
 
+### Allocation and reuse
+
+`StreamIdAllocator` allocates the IDs owned by one endpoint in ascending
+order. A client allocator returns `1`, `3`, `5`, and so on; a server allocator
+returns `2`, `4`, `6`, and so on. Its optional inclusive maximum makes a
+connection-level stream limit explicit and lets allocation report exhaustion
+without wrapping.
+
+Allocated stream IDs are never reused for the lifetime of an allocator, even
+after their operation completes. This prevents delayed frames from an old
+operation being routed to a later operation with the same ID. On exhaustion,
+`allocate()` returns an unsuccessful `StreamIdAllocation` with
+`StatusCode::resource_limit_exceeded`.
+
 ## `MessageType`
 
 `MessageType` identifies the *kind* of message carried by a frame payload -

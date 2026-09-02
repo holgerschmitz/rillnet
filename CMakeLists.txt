@@ -31,6 +31,7 @@ set(rillnet_format_sources
   include/rillnet/error.hpp
   include/rillnet/lifecycle.hpp
   include/rillnet/operation.hpp
+  include/rillnet/stream_id_allocator.hpp
   include/rillnet/status_code.hpp
   include/rillnet/transport.hpp
   include/rillnet/tcp_transport.hpp
@@ -51,6 +52,7 @@ set(rillnet_format_sources
   tests/unit/error_test.cpp
   tests/unit/lifecycle_test.cpp
   tests/unit/operation_test.cpp
+  tests/unit/stream_id_allocator_test.cpp
   tests/unit/status_code_test.cpp
   tests/unit/transport_test.cpp
   tests/unit/tcp_transport_test.cpp

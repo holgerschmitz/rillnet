@@ -12,6 +12,7 @@ add_executable(rillnet_unit_tests
   error_test.cpp
   lifecycle_test.cpp
   operation_test.cpp
+  stream_id_allocator_test.cpp
   status_code_test.cpp
   transport_test.cpp
   tcp_transport_test.cpp

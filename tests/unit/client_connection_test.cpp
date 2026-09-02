@@ -1,9 +1,12 @@
 #include <rillnet/client_connection.hpp>
+#include <rillnet/server_connection.hpp>
 
 #include "in_memory_transport.hpp"
 
 #include <rillnet/frame.hpp>
 #include <rillnet/frame_codec.hpp>
+#include <rillnet/frame_decoder.hpp>
+#include <rillnet/frame_flags.hpp>
 #include <rillnet/message_codec.hpp>
 #include <rillnet/message_registry.hpp>
 #include <rillnet/status_code.hpp>
@@ -11,6 +14,9 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/redirect_error.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/asio/use_future.hpp>
 
@@ -18,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <future>
 #include <initializer_list>
 #include <memory>
 #include <thread>
@@ -30,11 +37,17 @@ using rillnet::ClientConnection;
 using rillnet::DecodeResult;
 using rillnet::encode_frame;
 using rillnet::encode_message;
+using rillnet::FrameDecoder;
+using rillnet::FrameFlags;
 using rillnet::FrameType;
+using rillnet::has_flag;
 using rillnet::MessageRegistry;
 using rillnet::StatusCode;
 using rillnet::StreamId;
+using rillnet::ServerConnection;
+using rillnet::SessionContext;
 using rillnet::testing::InMemoryTransport;
+using rillnet::testing::DuplexTransport;
 
 struct StartSimulation {
     std::uint32_t id = 0;
@@ -424,6 +437,197 @@ TEST(ClientConnectionTest, IgnoresDuplicateResponsesAndResponsesForUnknownStream
     ASSERT_TRUE(result.ok());
     ASSERT_TRUE(result.value.has_value());
     EXPECT_EQ(result.value->id, 42U); // NOLINT(bugprone-unchecked-optional-access)
+}
+
+TEST(ClientConnectionTest, CancelsOneOperationWithoutClosingTheConnection)
+{
+    boost::asio::io_context context;
+    const auto registry = make_registry();
+    auto transport =
+        std::make_unique<InMemoryTransport>(encode_response_bytes(registry, {{StreamId{3}, {22}}}));
+    const auto *transport_observer = transport.get();
+    ClientConnection connection(context.get_executor(), std::move(transport), registry);
+
+    auto cancelled_request = boost::asio::co_spawn(
+        context,
+        [&]() -> boost::asio::awaitable<DecodeResult<SimulationStarted>> {
+            auto started =
+                co_await connection.start_request<StartSimulation, SimulationStarted>({1});
+            if (!started.ok()) {
+                co_return DecodeResult<SimulationStarted>::failure(started.status, started.message);
+            }
+
+            auto operation = std::move(*started.operation);
+            EXPECT_EQ(operation.stream(), StreamId{1});
+            EXPECT_TRUE(operation.cancel());
+            co_return co_await operation.async_wait();
+        },
+        boost::asio::use_future);
+    auto successful_request = boost::asio::co_spawn(
+        context,
+        [&]() -> boost::asio::awaitable<DecodeResult<SimulationStarted>> {
+            co_return co_await connection.request<StartSimulation, SimulationStarted>({2});
+        },
+        boost::asio::use_future);
+    auto run_future =
+        boost::asio::co_spawn(context, [&]() { return connection.run(); }, boost::asio::use_future);
+
+    context.run();
+
+    const auto cancelled_result = cancelled_request.get();
+    const auto successful_result = successful_request.get();
+    run_future.get();
+
+    EXPECT_FALSE(cancelled_result.ok());
+    EXPECT_EQ(cancelled_result.status, StatusCode::cancelled);
+    EXPECT_FALSE(cancelled_result.value.has_value());
+    ASSERT_TRUE(successful_result.ok());
+    ASSERT_TRUE(successful_result.value.has_value());
+    EXPECT_EQ(successful_result.value->id, 22U); // NOLINT(bugprone-unchecked-optional-access)
+
+    FrameDecoder outgoing_decoder;
+    auto outgoing_frames = outgoing_decoder.push(transport_observer->outgoing());
+    ASSERT_EQ(outgoing_frames.size(), 3U);
+    EXPECT_EQ(outgoing_frames[1].header.stream, StreamId{1});
+    EXPECT_EQ(outgoing_frames[1].header.type, FrameType::request);
+    EXPECT_TRUE(has_flag(outgoing_frames[1].header.flags, FrameFlags::cancel));
+}
+
+TEST(ClientConnectionTest, ResponseWinsWhenItArrivesBeforeCancellation)
+{
+    boost::asio::io_context context;
+    const auto registry = make_registry();
+    ClientConnection connection(
+        context.get_executor(),
+        std::make_unique<InMemoryTransport>(encode_response_bytes(registry, {42})), registry);
+
+    auto request_future = boost::asio::co_spawn(
+        context,
+        [&]() -> boost::asio::awaitable<DecodeResult<SimulationStarted>> {
+            auto started =
+                co_await connection.start_request<StartSimulation, SimulationStarted>({7});
+            if (!started.ok()) {
+                co_return DecodeResult<SimulationStarted>::failure(started.status, started.message);
+            }
+
+            auto operation = std::move(*started.operation);
+            co_await boost::asio::post(boost::asio::use_awaitable);
+            EXPECT_FALSE(operation.cancel());
+            co_return co_await operation.async_wait();
+        },
+        boost::asio::use_future);
+    auto run_future =
+        boost::asio::co_spawn(context, [&]() { return connection.run(); }, boost::asio::use_future);
+
+    context.run();
+
+    const auto result = request_future.get();
+    run_future.get();
+    ASSERT_TRUE(result.ok());
+    ASSERT_TRUE(result.value.has_value());
+    EXPECT_EQ(result.value->id, 42U); // NOLINT(bugprone-unchecked-optional-access)
+}
+
+TEST(ClientConnectionTest, CancelsOneOfTwoConcurrentRequestsThroughTheServer)
+{
+    boost::asio::io_context context;
+    const auto registry = make_registry();
+    auto transports = DuplexTransport::make_pair(context.get_executor());
+    auto client_transport = std::move(transports.first);
+    auto server_transport = std::move(transports.second);
+    auto *client_transport_ptr = client_transport.get();
+    auto *server_transport_ptr = server_transport.get();
+    ClientConnection client(context.get_executor(), std::move(client_transport), registry);
+    ServerConnection server(context.get_executor(), std::move(server_transport), registry);
+    auto watchdog = std::make_shared<boost::asio::steady_timer>(context);
+    watchdog->expires_after(std::chrono::seconds(1));
+    std::size_t cancellation_observed = 0;
+    std::size_t handled_requests = 0;
+
+    server.handle<StartSimulation>(
+        [&context, &cancellation_observed, &handled_requests](SessionContext &session,
+                                                              StartSimulation request)
+            -> boost::asio::awaitable<SimulationStarted> {
+            ++handled_requests;
+            if (request.id == 1) {
+                boost::asio::steady_timer timer(context);
+                timer.expires_after(std::chrono::milliseconds(10));
+                co_await timer.async_wait(boost::asio::use_awaitable);
+                if (session.is_cancelled()) {
+                    ++cancellation_observed;
+                    session.throw_if_cancelled();
+                }
+            }
+            co_return SimulationStarted{request.id};
+        });
+
+    auto client_future = boost::asio::co_spawn(
+        context,
+        [&]() -> boost::asio::awaitable<void> {
+            auto first = co_await client.start_request<StartSimulation, SimulationStarted>({1});
+            auto second = co_await client.start_request<StartSimulation, SimulationStarted>({2});
+            EXPECT_TRUE(first.ok());
+            EXPECT_TRUE(second.ok());
+            if (!first.ok() || !second.ok()) {
+                client_transport_ptr->close();
+                co_return;
+            }
+
+            auto cancelled = std::move(*first.operation);
+            auto successful = std::move(*second.operation);
+            EXPECT_TRUE(cancelled.cancel());
+            const auto cancelled_result = co_await cancelled.async_wait();
+            const auto successful_result = co_await successful.async_wait();
+            EXPECT_FALSE(cancelled_result.ok());
+            EXPECT_EQ(cancelled_result.status, StatusCode::cancelled);
+            EXPECT_TRUE(successful_result.ok());
+            EXPECT_TRUE(successful_result.value.has_value());
+            if (successful_result.ok() && successful_result.value.has_value()) {
+                EXPECT_EQ(successful_result.value->id, 2U);
+            }
+            boost::system::error_code timer_error;
+            watchdog->cancel(timer_error);
+            client_transport_ptr->close();
+            server_transport_ptr->close();
+        },
+        boost::asio::use_future);
+    boost::asio::co_spawn(
+        context,
+        [watchdog, client_transport_ptr, server_transport_ptr]() -> boost::asio::awaitable<void> {
+            boost::system::error_code error;
+            co_await watchdog->async_wait(boost::asio::redirect_error(
+                boost::asio::use_awaitable, error));
+            if (!error) {
+                client_transport_ptr->close();
+                server_transport_ptr->close();
+            }
+        },
+        boost::asio::detached);
+    auto server_future =
+        boost::asio::co_spawn(context, [&]() { return server.run(); }, boost::asio::use_future);
+    auto client_run_future =
+        boost::asio::co_spawn(context, [&]() { return client.run(); }, boost::asio::use_future);
+
+    context.run_for(std::chrono::seconds(2));
+    client_transport_ptr->close();
+    server_transport_ptr->close();
+    context.restart();
+    context.run_for(std::chrono::milliseconds(100));
+
+    EXPECT_EQ(client_future.wait_for(std::chrono::seconds(0)), std::future_status::ready);
+    EXPECT_EQ(server_future.wait_for(std::chrono::seconds(0)), std::future_status::ready);
+    if (client_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        client_future.get();
+    }
+    if (server_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        server_future.get();
+    }
+    EXPECT_EQ(client_run_future.wait_for(std::chrono::seconds(0)), std::future_status::ready);
+    if (client_run_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        client_run_future.get();
+    }
+    EXPECT_EQ(handled_requests, 2U);
+    EXPECT_EQ(cancellation_observed, 1U);
 }
 
 } // namespace

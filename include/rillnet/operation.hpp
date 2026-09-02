@@ -5,12 +5,18 @@
 #include <rillnet/status_code.hpp>
 
 #include <chrono>
+#include <exception>
 #include <functional>
 #include <optional>
 #include <string>
 #include <utility>
 
 namespace rillnet {
+
+class CancellationError final : public std::exception {
+    public:
+        [[nodiscard]] const char *what() const noexcept override { return "operation cancelled"; }
+};
 
 class OperationResult {
   public:

@@ -7,8 +7,10 @@
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/strand.hpp>
+#include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/use_future.hpp>
 
 #include <gtest/gtest.h>
@@ -28,11 +30,13 @@ using rillnet::encode_frame;
 using rillnet::encode_message;
 using rillnet::Frame;
 using rillnet::FrameDecoder;
+using rillnet::FrameFlags;
 using rillnet::FrameType;
 using rillnet::MessageRegistry;
 using rillnet::ServerConnection;
 using rillnet::SessionContext;
 using rillnet::StreamId;
+using rillnet::has_flag;
 using rillnet::testing::InMemoryTransport;
 
 struct StartSimulation {
@@ -62,6 +66,15 @@ std::vector<std::byte> encode_request_bytes(const MessageRegistry<> &registry)
         bytes.insert(bytes.end(), frame_bytes.begin(), frame_bytes.end());
     }
     return bytes;
+}
+
+std::vector<std::byte> encode_cancel_bytes(StreamId stream)
+{
+    Frame cancel;
+    cancel.header.type = FrameType::request;
+    cancel.header.flags = FrameFlags::cancel | FrameFlags::end_of_stream;
+    cancel.header.stream = stream;
+    return encode_frame(cancel);
 }
 
 TEST(ServerConnectionTest, DispatchesHandlersWithoutBlockingTheReadLoop)
@@ -167,6 +180,43 @@ TEST(ServerConnectionTest, SupportsMultiThreadedIoWithSerializedConnectionState)
     for (const auto &response : responses) {
         EXPECT_EQ(response.header.type, FrameType::response);
     }
+}
+
+TEST(ServerConnectionTest, ExposesRemoteCancellationToOnlyTheMatchingHandler)
+{
+    boost::asio::io_context context;
+    const auto registry = make_registry();
+    auto incoming = encode_request_bytes(registry);
+    const auto cancellation = encode_cancel_bytes(StreamId{1});
+    incoming.insert(incoming.end(), cancellation.begin(), cancellation.end());
+    auto transport = std::make_unique<InMemoryTransport>(std::move(incoming));
+    auto *transport_ptr = transport.get();
+    ServerConnection connection(context.get_executor(), std::move(transport), registry);
+    std::size_t cancelled_handlers = 0;
+
+    connection.handle<StartSimulation>(
+        [&cancelled_handlers](SessionContext &session,
+                              StartSimulation request) -> boost::asio::awaitable<SimulationStarted> {
+            co_await boost::asio::post(boost::asio::use_awaitable);
+            if (session.is_cancelled()) {
+                ++cancelled_handlers;
+                session.throw_if_cancelled();
+            }
+            co_return SimulationStarted{request.id};
+        });
+
+    auto future =
+        boost::asio::co_spawn(context, [&]() { return connection.run(); }, boost::asio::use_future);
+    context.run();
+    future.get();
+
+    EXPECT_EQ(cancelled_handlers, 1U);
+    FrameDecoder decoder;
+    const auto responses = decoder.push(transport_ptr->outgoing());
+    ASSERT_EQ(responses.size(), 1U);
+    EXPECT_EQ(responses[0].header.stream, StreamId{3});
+    EXPECT_EQ(responses[0].header.type, FrameType::response);
+    EXPECT_FALSE(has_flag(responses[0].header.flags, FrameFlags::cancel));
 }
 
 } // namespace

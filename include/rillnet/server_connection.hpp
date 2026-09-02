@@ -6,6 +6,7 @@
 #include <rillnet/identifiers.hpp>
 #include <rillnet/message_codec.hpp>
 #include <rillnet/message_registry.hpp>
+#include <rillnet/operation.hpp>
 #include <rillnet/transport.hpp>
 #include <rillnet/write_queue.hpp>
 
@@ -29,13 +30,28 @@ namespace rillnet {
 class SessionContext {
   public:
     [[nodiscard]] StreamId stream_id() const noexcept { return stream_id_; }
+    [[nodiscard]] bool is_cancelled() const noexcept
+    {
+        return operation_ != nullptr && operation_->cancellation_requested();
+    }
+
+    void throw_if_cancelled() const
+    {
+        if (is_cancelled()) {
+            throw CancellationError();
+        }
+    }
 
   private:
     template <typename> friend class ServerConnection;
 
-    explicit SessionContext(StreamId stream_id) noexcept : stream_id_(stream_id) {}
+    SessionContext(StreamId stream_id, std::shared_ptr<Operation> operation) noexcept
+        : stream_id_(stream_id), operation_(std::move(operation))
+    {
+    }
 
     StreamId stream_id_;
+    std::shared_ptr<Operation> operation_;
 };
 
 // Owns one server-side connection and dispatches request frames to registered typed handlers.
@@ -65,17 +81,19 @@ template <typename CodecType = PodCodec> class ServerConnection {
 
         handlers_.insert_or_assign(
             *message_type,
-            [this, handler = std::move(handler)](Frame frame) -> boost::asio::awaitable<void> {
+            [this, handler = std::move(handler)](Frame frame,
+                                                 std::shared_ptr<Operation> operation)
+                -> boost::asio::awaitable<void> {
                 const auto request = decode_message<Request>(registry_, frame);
                 if (!request.ok()) {
                     co_return;
                 }
 
-                SessionContext context(frame.header.stream);
+                SessionContext context(frame.header.stream, operation);
                 const auto response = co_await handler(context, *request.value);
                 const auto encoded =
                     encode_message(registry_, response, frame.header.stream, FrameType::response);
-                if (encoded.ok()) {
+                if (encoded.ok() && operation->complete("response ready")) {
                     co_await write_queue_.enqueue(std::move(*encoded.frame));
                 }
             });
@@ -89,7 +107,8 @@ template <typename CodecType = PodCodec> class ServerConnection {
     }
 
   private:
-    using RequestHandler = std::function<boost::asio::awaitable<void>(Frame)>;
+    using RequestHandler =
+        std::function<boost::asio::awaitable<void>(Frame, std::shared_ptr<Operation>)>;
 
     boost::asio::awaitable<void> read_loop()
     {
@@ -119,6 +138,14 @@ template <typename CodecType = PodCodec> class ServerConnection {
             return;
         }
 
+        if (has_flag(frame.header.flags, FrameFlags::cancel)) {
+            const auto found = operations_.find(frame.header.stream);
+            if (found != operations_.end()) {
+                (void)found->second->cancel("operation cancelled by peer");
+            }
+            return;
+        }
+
         const auto message_type = peek_message_type(frame.payload);
         if (!message_type.has_value()) {
             return;
@@ -128,18 +155,28 @@ template <typename CodecType = PodCodec> class ServerConnection {
             return;
         }
 
+        auto operation = std::make_shared<Operation>(frame.header.stream);
+        (void)operation->activate();
+        const auto [inserted, did_insert] = operations_.emplace(frame.header.stream, operation);
+        if (!did_insert) {
+            return;
+        }
+
         ++active_handlers_;
-        boost::asio::co_spawn(executor_, run_handler(found->second, std::move(frame)),
+        boost::asio::co_spawn(executor_,
+                              run_handler(found->second, std::move(frame), inserted->second),
                               boost::asio::detached);
     }
 
-    boost::asio::awaitable<void> run_handler(RequestHandler handler, Frame frame)
+    boost::asio::awaitable<void> run_handler(RequestHandler handler, Frame frame,
+                                              std::shared_ptr<Operation> operation)
     {
         try {
-            co_await handler(std::move(frame));
+            co_await handler(std::move(frame), std::move(operation));
         } catch (...) {
             // Handler exceptions are isolated to their operation; error frames follow in Epic 4.6.
         }
+        operations_.erase(frame.header.stream);
         --active_handlers_;
         close_queue_when_idle();
     }
@@ -157,6 +194,7 @@ template <typename CodecType = PodCodec> class ServerConnection {
     WriteQueue write_queue_;
     FrameDecoder decoder_;
     std::unordered_map<MessageType, RequestHandler> handlers_;
+    std::unordered_map<StreamId, std::shared_ptr<Operation>> operations_;
     std::size_t active_handlers_ = 0;
     bool reading_ = true;
 };

@@ -38,6 +38,7 @@ set(rillnet_format_sources
   include/rillnet/tcp_client.hpp
   include/rillnet/tcp_server.hpp
   include/rillnet/write_queue.hpp
+  include/rillnet/client_connection.hpp
   src/rillnet.cpp
   tests/unit/version_test.cpp
   tests/unit/identifiers_test.cpp
@@ -59,6 +60,8 @@ set(rillnet_format_sources
   tests/unit/tcp_client_test.cpp
   tests/unit/tcp_server_test.cpp
   tests/unit/write_queue_test.cpp
+  tests/unit/in_memory_transport.hpp
+  tests/unit/client_connection_test.cpp
 )
 
 set(rillnet_clang_tidy_sources ${rillnet_format_sources})

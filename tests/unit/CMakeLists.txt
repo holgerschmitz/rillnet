@@ -19,6 +19,7 @@ add_executable(rillnet_unit_tests
   tcp_client_test.cpp
   tcp_server_test.cpp
   write_queue_test.cpp
+  client_connection_test.cpp
 )
 
 target_link_libraries(rillnet_unit_tests

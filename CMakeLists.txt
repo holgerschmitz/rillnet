@@ -27,6 +27,7 @@ set(rillnet_format_sources
   include/rillnet/frame_decoder.hpp
   include/rillnet/codec.hpp
   include/rillnet/message_registry.hpp
+  include/rillnet/message_codec.hpp
   include/rillnet/error.hpp
   include/rillnet/lifecycle.hpp
   include/rillnet/status_code.hpp
@@ -45,6 +46,7 @@ set(rillnet_format_sources
   tests/unit/frame_decoder_test.cpp
   tests/unit/codec_test.cpp
   tests/unit/message_registry_test.cpp
+  tests/unit/message_codec_test.cpp
   tests/unit/error_test.cpp
   tests/unit/lifecycle_test.cpp
   tests/unit/status_code_test.cpp

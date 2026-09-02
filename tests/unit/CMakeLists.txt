@@ -8,6 +8,7 @@ add_executable(rillnet_unit_tests
   frame_decoder_test.cpp
   codec_test.cpp
   message_registry_test.cpp
+  message_codec_test.cpp
   error_test.cpp
   lifecycle_test.cpp
   status_code_test.cpp
